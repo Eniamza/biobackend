@@ -1,18 +1,17 @@
-import { serve } from '@hono/node-server'
-import { Hono } from 'hono'
+// index.js
+import { Hono } from 'hono';
+import { serve } from '@hono/node-server';
+import { users } from './src/routes/users.js';
+import { auth } from './src/routes/auth.js';
+import { posts } from './src/routes/posts/index.js';
 
 const app = new Hono()
+  .route('/api/v1/auth', auth)
+  .route('/api/v1/users', users)
+  .route('/api/v1/posts', posts);
 
-app.get('/', (c) => {
-  return c.text('Hello Hono!')
-})
-
-const server = serve({
-  fetch: app.fetch,
-  port: 3000
-}, (info) => {
-  console.log(`Server is running on http://localhost:${info.port}`)
-})
+const server = serve({ fetch: app.fetch, port: 8787 });
+console.log('Listening on http://localhost:8787');
 
 process.on('SIGINT', () => {
   server.close()
