@@ -1,14 +1,11 @@
 // index.js
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
-import { users } from './src/routes/users.js';
-import { auth } from './src/routes/auth.js';
-import { posts } from './src/routes/posts/index.js';
+import { entity } from './routes/entity.js';
+
 
 const app = new Hono()
-  .route('/api/v1/auth', auth)
-  .route('/api/v1/users', users)
-  .route('/api/v1/posts', posts);
+  .route('/api/v1/entity', entity)
 
 const server = serve({ fetch: app.fetch, port: 8787 });
 console.log('Listening on http://localhost:8787');
