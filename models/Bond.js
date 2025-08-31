@@ -6,6 +6,7 @@ const BondSchema = new mongoose.Schema({
   startTime: { type: Date, default: Date.now },
   duration: { type: Number, required: true }, // ms or seconds
   status: { type: String, enum: ["active", "completed"], default: "active" },
+  createdAt: { type: Number, default: Date.now }, // seconds since creation
   resultingCellId: { type: mongoose.Schema.Types.ObjectId, ref: "Cell" }
 });
 
