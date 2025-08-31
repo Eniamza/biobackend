@@ -1,20 +1,20 @@
 import { Hono } from 'hono';
 import { dbConnect } from '../../lib/db.js';
-import Cell from '../../models/Cell.js';
+import Bond from '../../models/Bond.js';
 import mongoose from 'mongoose';
 
-export const cell = new Hono()
+export const bond = new Hono()
   .get('/:id', async (c) => {
     const { id } = c.req.param();
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return c.text('Invalid cell ID', 400);
+      return c.text('Invalid bond ID', 400);
     }
     const db = await dbConnect();
-    const cell = await Cell.findById(id);
+    const bond = await Bond.findById(id);
 
-    if (!cell) {
-      return c.notFound('Cell not found');
+    if (!bond) {
+      return c.notFound('Bond not found');
     }
 
-    return c.json(cell);
+    return c.json(bond);
   });
