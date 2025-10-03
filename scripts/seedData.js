@@ -12,46 +12,73 @@ const seedData = async () => {
     
     console.log('Connected to the database');
     
-    // Check if cell 0 already exists
-    const existingCell = await Cell.findOne({ cellId: 0 });
+    // Check if seed data already exists
+    const existingConsolidation = await Consolidation.findOne({ consolidationId: 0 });
     
-    if (existingCell) {
-      console.log('Cell 0 already exists:', existingCell._id);
+    if (existingConsolidation) {
+      console.log('Seed data already exists - Consolidation 0 found');
       await mongoose.disconnect();
       return;
     }
     
-    // Create cell 0 (the origin cell)
+    // Create first consolidation with cell 0
     const cell0 = new Cell({
       cellId: 0,
-      parentEntityIds: [], // Empty as it's the original cell
+      parentEntityIds: [], // Empty as it's the origin cell
       potentialTrait: "origin", // Special trait for the origin cell
       energyLevel: 100, // Starting with high energy
       status: "normal"
     });
     
-    // Save cell 0
-    const savedCell = await cell0.save();
-    console.log('Created cell 0:', savedCell._id);
+    const savedCell0 = await cell0.save();
+    console.log('Created cell 0:', savedCell0._id);
     
-    // Create the first consolidation that contains cell 0
-    const consolidation = new Consolidation({
+    const consolidation0 = new Consolidation({
       consolidationId: 0, // First consolidation
-      originCellId: savedCell._id,
-      cellIds: [savedCell._id],
+      originCellId: savedCell0._id,
+      cellIds: [savedCell0._id],
       state: "transparent"
     });
     
-    // Save consolidation
-    const savedConsolidation = await consolidation.save();
-    console.log('Created initial consolidation:', savedConsolidation._id);
+    const savedConsolidation0 = await consolidation0.save();
+    console.log('Created consolidation 0:', savedConsolidation0._id);
     
     // Update cell 0 with the consolidation ID
-    savedCell.consolidationId = savedConsolidation._id;
-    await savedCell.save();
+    savedCell0.consolidationId = savedConsolidation0._id;
+    await savedCell0.save();
     console.log('Updated cell 0 with consolidation ID');
     
-    console.log('Seed data created successfully');
+    // Create second consolidation with cell 0
+    const cell0_second = new Cell({
+      cellId: 0, // This is cell 0 of the second consolidation
+      parentEntityIds: [], // Empty as it's the origin cell
+      potentialTrait: "resilience", // Different trait for variety
+      energyLevel: 100, // Starting with high energy
+      status: "normal"
+    });
+    
+    const savedCell0Second = await cell0_second.save();
+    console.log('Created second cell 0:', savedCell0Second._id);
+    
+    const consolidation1 = new Consolidation({
+      consolidationId: 1, // Second consolidation
+      originCellId: savedCell0Second._id,
+      cellIds: [savedCell0Second._id],
+      state: "transparent"
+    });
+    
+    const savedConsolidation1 = await consolidation1.save();
+    console.log('Created consolidation 1:', savedConsolidation1._id);
+    
+    // Update second cell 0 with the consolidation ID
+    savedCell0Second.consolidationId = savedConsolidation1._id;
+    await savedCell0Second.save();
+    console.log('Updated second cell 0 with consolidation ID');
+    
+    console.log('✅ Seed data created successfully:');
+    console.log('   - 2 Consolidations (ID: 0, 1)');
+    console.log('   - 2 Cells (both Cell 0 in their respective consolidations)');
+    console.log('   - Ready for cell division and growth');
     await mongoose.disconnect();
     console.log('Disconnected from database');
     
