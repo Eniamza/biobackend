@@ -47,8 +47,16 @@ class SimulationScheduler {
         return;
       }
 
-      // Random chance of bond formation (40% per cycle) - increased to create more consolidations
-      if (Math.random() > 0.40) {
+      // Get current multiplier to affect bond formation chance
+      const latestMultiplier = await Multiplier.findOne().sort({ createdAt: -1 });
+      const multiplierValue = latestMultiplier ? latestMultiplier.multiplier : 1.0;
+      
+      // Base chance is 40%, multiplier scales it up to 80% (at 2.0x multiplier)
+      const baseBondChance = 0.40;
+      const bondChance = Math.min(0.80, baseBondChance * multiplierValue);
+      
+      // Random chance of bond formation - affected by multiplier
+      if (Math.random() > bondChance) {
         return;
       }
 
@@ -83,7 +91,7 @@ class SimulationScheduler {
         entity2.save()
       ]);
 
-      console.log(`🔗 Bond formed between entities ${entity1.entityId} and ${entity2.entityId}`);
+      console.log(`🔗 Bond formed between entities ${entity1.entityId} and ${entity2.entityId} (chance: ${(bondChance * 100).toFixed(1)}% with ${multiplierValue.toFixed(2)}x multiplier)`);
 
       // Schedule bond completion and cell creation
       setTimeout(async () => {
@@ -158,16 +166,28 @@ class SimulationScheduler {
 
   async generateCells() {
     try {
+      // Get current multiplier to affect cell division chance
+      const latestMultiplier = await Multiplier.findOne().sort({ createdAt: -1 });
+      const multiplierValue = latestMultiplier ? latestMultiplier.multiplier : 1.0;
+      
+      // Base chance is 50%, multiplier scales it up to 100% (at 2.0x multiplier)
+      const baseDivisionChance = 0.50;
+      const divisionChance = Math.min(1.0, baseDivisionChance * multiplierValue);
+      
       // Get cells that might divide (high energy, normal status, within consolidations)
       const dividingCells = await Cell.find({ 
         status: 'normal', 
-        energyLevel: { $gt: 60 }, // Lowered threshold for more divisions
+        energyLevel: { $gt: 40 }, // Further lowered threshold for faster divisions
         consolidationId: { $exists: true, $ne: null }
-      }).limit(8); // Increased limit for more potential divisions
+      }).limit(15); // Increased limit for more potential divisions
+
+      if (dividingCells.length > 0) {
+        console.log(`🔬 Checking ${dividingCells.length} cells for division (${(divisionChance * 100).toFixed(1)}% chance with ${multiplierValue.toFixed(2)}x multiplier)`);
+      }
 
       for (const cell of dividingCells) {
-        // Random chance of division (35% per cell per cycle) - increased to grow consolidations faster
-        if (Math.random() < 0.35) {
+        // Random chance of division - affected by multiplier
+        if (Math.random() < divisionChance) {
           // Get consolidation to determine next cell ID within it
           const consolidation = await Consolidation.findById(cell.consolidationId).populate('cellIds');
           if (!consolidation) continue;
@@ -204,11 +224,13 @@ class SimulationScheduler {
             { $push: { cellIds: savedNewCell._id } }
           );
 
-          // Reset parent cell status after short delay
+          // Reset parent cell status after short delay and regenerate some energy
           setTimeout(async () => {
             cell.status = 'normal';
+            // Regenerate some energy to keep cells active
+            cell.energyLevel = Math.min(100, cell.energyLevel + 20);
             await cell.save();
-          }, 30000); // 30 seconds
+          }, 15000); // 15 seconds (reduced from 30)
           
           console.log(`🔬 Cell division: Cell ${cell.cellId} created new cell ${nextCellIdInConsolidation} in consolidation ${consolidation.consolidationId}`);
 

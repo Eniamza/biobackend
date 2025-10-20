@@ -78,7 +78,8 @@ const seedData = async () => {
     console.log('✅ Seed data created successfully:');
     console.log('   - 2 Consolidations (ID: 0, 1)');
     console.log('   - 2 Cells (both Cell 0 in their respective consolidations)');
-    console.log('   - Ready for cell division and growth');
+    console.log('   - Ready for cell division and growth to 50+ cells');
+    console.log('   - Entities will emerge when consolidations reach 50+ cells');
     await mongoose.disconnect();
     console.log('Disconnected from database');
     
