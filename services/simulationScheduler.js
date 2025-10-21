@@ -201,41 +201,46 @@ class SimulationScheduler {
             ? cellsInConsolidation[0].cellId + 1 
             : 1;
           
-          // Create new cell from division
+          // Generate random division duration (1-6 minutes, unaffected by multiplier)
+          const divisionDuration = Math.floor(Math.random() * 300000) + 60000; // 60000-360000 ms
+          
+          // Create placeholder cell IMMEDIATELY with status: 'forming'
           const newCell = new Cell({
             cellId: nextCellIdInConsolidation,
             parentEntityIds: cell.parentEntityIds, // Inherit parent entities
             consolidationId: cell.consolidationId,
             potentialTrait: this.getRandomTrait(),
             energyLevel: Math.floor(cell.energyLevel / 2), // Split energy
-            status: 'normal'
+            status: 'forming', // Forming until division completes
+            divisionStartTime: new Date(), // ISO timestamp
+            divisionDuration: divisionDuration
           });
 
-          // Reduce parent cell energy and mark as dividing temporarily
+          const savedNewCell = await newCell.save();
+
+          // Reduce parent cell energy and mark as dividing
           cell.energyLevel = Math.floor(cell.energyLevel / 2);
           cell.status = 'dividing';
+          cell.divisionDuration = divisionDuration;
+          cell.divisionStartTime = new Date();
+          cell.resultingCellId = savedNewCell._id; // Reference to placeholder cell
           
           await cell.save();
-          const savedNewCell = await newCell.save();
           
-          // Update consolidation to include new cell
+          // Update consolidation to include placeholder cell (but it's not active yet)
           await Consolidation.findByIdAndUpdate(
             cell.consolidationId,
             { $push: { cellIds: savedNewCell._id } }
           );
-
-          // Reset parent cell status after short delay and regenerate some energy
-          setTimeout(async () => {
-            cell.status = 'normal';
-            // Regenerate some energy to keep cells active
-            cell.energyLevel = Math.min(100, cell.energyLevel + 20);
-            await cell.save();
-          }, 15000); // 15 seconds (reduced from 30)
           
-          console.log(`🔬 Cell division: Cell ${cell.cellId} created new cell ${nextCellIdInConsolidation} in consolidation ${consolidation.consolidationId}`);
+          console.log(`🔬 Cell ${cell.cellId} started division in consolidation ${consolidation.consolidationId} (duration: ${(divisionDuration / 60000).toFixed(1)} min, resulting cell: ${nextCellIdInConsolidation})`);
 
+          // Schedule division completion
+          setTimeout(async () => {
+            await this.completeDivision(cell._id, savedNewCell._id);
+          }, divisionDuration);
+          
           // Check if consolidation should evolve to entity
-          // Pass boost mode if we're behind target
           const currentEntityCount = await Entity.countDocuments();
           const targetEntitiesPerDay = 90;
           const currentDate = new Date();
@@ -250,6 +255,40 @@ class SimulationScheduler {
     }
   }
 
+  // NEW METHOD: Complete cell division
+  async completeDivision(parentCellId, newCellId) {
+    try {
+      await dbConnect();
+      
+      const parentCell = await Cell.findById(parentCellId);
+      const newCell = await Cell.findById(newCellId);
+      
+      if (!parentCell || parentCell.status !== 'dividing') {
+        console.log(`⚠️ Parent cell ${parentCellId} division completion skipped - not in dividing state`);
+        return;
+      }
+
+      if (!newCell) {
+        console.log(`⚠️ New cell ${newCellId} not found for division completion`);
+        return;
+      }
+
+      // Mark new cell as normal (fully formed and ready to divide)
+      newCell.status = 'normal';
+      await newCell.save();
+      
+      // Reset parent cell status and regenerate energy
+      parentCell.status = 'normal';
+      parentCell.energyLevel = Math.min(100, parentCell.energyLevel + 20);
+      await parentCell.save();
+      
+      console.log(`✅ Cell division completed: Cell ${parentCell.cellId} → Cell ${newCell.cellId} is now normal (can divide)`);
+      
+    } catch (error) {
+      console.error('Error completing division:', error);
+    }
+  }
+
   // Entities are now ONLY created through consolidation evolution
   // This method has been removed - entities must evolve from consolidations with 50+ cells
 
@@ -257,9 +296,15 @@ class SimulationScheduler {
     try {
       const consolidation = await Consolidation.findById(consolidationId).populate('cellIds');
       
-      // If consolidation has 50+ cells, it can evolve to an entity
+      // Count only normal cells (not forming/dividing) for evolution requirement
+      const normalCellsCount = await Cell.countDocuments({
+        consolidationId: consolidationId,
+        status: 'normal'
+      });
+      
+      // If consolidation has 50+ normal cells, it can evolve to an entity
       // Only check transparent consolidations (not already evolving)
-      if (consolidation && consolidation.cellIds.length >= 50 && consolidation.state === 'transparent') {
+      if (consolidation && normalCellsCount >= 50 && consolidation.state === 'transparent') {
         // Dynamic evolution chance - boost if behind target
         const baseChance = 0.25;
         const evolutionChance = boostMode ? Math.min(0.45, baseChance * 1.8) : baseChance;
@@ -269,7 +314,7 @@ class SimulationScheduler {
           consolidation.state = 'dense';
           await consolidation.save();
           
-          console.log(`🔄 Consolidation ${consolidation.consolidationId} evolved to dense state (${consolidation.cellIds.length} cells)`);
+          console.log(`🔄 Consolidation ${consolidation.consolidationId} evolved to dense state (${normalCellsCount} normal cells)`);
           
           // Schedule entity creation after some time (shorter than cycle interval)
           setTimeout(async () => {
@@ -309,7 +354,7 @@ class SimulationScheduler {
       consolidation.evolvedToEntityId = newEntityId;
       await consolidation.save();
       
-      console.log(`Consolidation ${consolidation.consolidationId} evolved into Entity ${newEntityId} with trait: ${savedEntity.trait}`);
+      console.log(`✨ Consolidation ${consolidation.consolidationId} evolved into Entity ${newEntityId} with trait: ${savedEntity.trait}`);
       
     } catch (error) {
       console.error('Error evolving consolidation to entity:', error);
@@ -328,7 +373,7 @@ class SimulationScheduler {
       });
       
       await newMultiplier.save();
-      console.log(`📈 Updated multiplier: ${multiplier.toFixed(2)} (Market Cap: ${marketCap.toLocaleString()})`);
+      console.log(`📈 Updated multiplier: ${multiplier.toFixed(2)}x (Market Cap: $${marketCap.toLocaleString()})`);
     } catch (error) {
       console.error('Error updating multiplier:', error);
     }
@@ -369,10 +414,13 @@ class SimulationScheduler {
       // Get current counts
       const entityCount = await Entity.countDocuments();
       const cellCount = await Cell.countDocuments();
+      const normalCellCount = await Cell.countDocuments({ status: 'normal' });
+      const formingCellCount = await Cell.countDocuments({ status: 'forming' });
+      const dividingCellCount = await Cell.countDocuments({ status: 'dividing' });
       const consolidationCount = await Consolidation.countDocuments();
       const bondCount = await Bond.countDocuments();
       
-      console.log(`📊 Current totals - Entities: ${entityCount}, Cells: ${cellCount}, Consolidations: ${consolidationCount}, Bonds: ${bondCount}`);
+      console.log(`📊 Current totals - Entities: ${entityCount}, Cells: ${cellCount} (${normalCellCount} normal, ${formingCellCount} forming, ${dividingCellCount} dividing), Consolidations: ${consolidationCount}, Bonds: ${bondCount}`);
       console.log('✅ Simulation cycle completed\n');
       
     } catch (error) {

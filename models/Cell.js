@@ -12,7 +12,10 @@ const CellSchema = new mongoose.Schema({
     type: String,
     enum: ["normal", "forming", "dividing"],
     default: "normal"
-  }
+  },
+  divisionDuration: { type: Number }, // Duration in milliseconds (60000-360000 = 1-6 minutes)
+  divisionStartTime: { type: Date }, // ISO timestamp when division started
+  resultingCellId: { type: mongoose.Schema.Types.ObjectId, ref: "Cell" } // The new cell created from division
 });
 
 const Cell = mongoose.model("Cell", CellSchema);
