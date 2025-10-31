@@ -9,6 +9,7 @@ import Bond from '../models/Bond.js';
 class SimulationScheduler {
   constructor() {
     this.isRunning = false;
+    this.intervalId = null; // Using setInterval instead of cron
     // Entities are now only created through consolidation evolution (not direct generation)
     this.traitOptions = [
       'strength', 'intelligence', 'agility', 'resilience', 'creativity',
@@ -20,11 +21,6 @@ class SimulationScheduler {
     return this.traitOptions[Math.floor(Math.random() * this.traitOptions.length)];
   }
 
-  async getNextCellId() {
-    const lastCell = await Cell.findOne().sort({ cellId: -1 });
-    return lastCell ? lastCell.cellId + 1 : 1;
-  }
-
   async getNextEntityId() {
     const lastEntity = await Entity.findOne().sort({ entityId: -1 });
     return lastEntity ? lastEntity.entityId + 1 : 1;
@@ -33,6 +29,198 @@ class SimulationScheduler {
   async getNextConsolidationId() {
     const lastConsolidation = await Consolidation.findOne().sort({ consolidationId: -1 });
     return lastConsolidation ? lastConsolidation.consolidationId + 1 : 1;
+  }
+
+  async debugCellStatus() {
+    try {
+      const cells = await Cell.find().select('cellId status energyLevel consolidationId').limit(5);
+      
+      console.log('🔍 Sample cell status:');
+      for (const cell of cells) {
+        console.log(`  Cell ${cell.cellId}: status=${cell.status}, energy=${cell.energyLevel}, consolidation=${cell.consolidationId || 'NONE'}`);
+      }
+      
+      const cellsWithConsolidation = await Cell.countDocuments({ consolidationId: { $exists: true, $ne: null } });
+      const cellsWithoutConsolidation = await Cell.countDocuments({ $or: [{ consolidationId: { $exists: false } }, { consolidationId: null }] });
+      
+      console.log(`  Cells with consolidation: ${cellsWithConsolidation}`);
+      console.log(`  Cells without consolidation: ${cellsWithoutConsolidation}`);
+      
+    } catch (error) {
+      console.error('Error debugging cells:', error);
+    }
+  }
+
+  async fixExistingCells() {
+    try {
+      await dbConnect();
+      
+      // Find cells without consolidationId
+      const orphanedCells = await Cell.find({
+        $or: [
+          { consolidationId: { $exists: false } },
+          { consolidationId: null }
+        ]
+      });
+      
+      if (orphanedCells.length === 0) {
+        console.log('✅ All cells have consolidations');
+        return;
+      }
+      
+      console.log(`🔧 Found ${orphanedCells.length} cells without consolidations`);
+      
+      // Get existing consolidations or create one if none exist
+      let consolidations = await Consolidation.find().sort({ consolidationId: 1 });
+      
+      if (consolidations.length === 0) {
+        console.log('📦 Creating initial consolidation...');
+        const consolidationId = await this.getNextConsolidationId();
+        const newConsolidation = new Consolidation({
+          consolidationId: consolidationId,
+          cellIds: [],
+          state: 'transparent'
+        });
+        const savedConsolidation = await newConsolidation.save();
+        consolidations = [savedConsolidation];
+      }
+      
+      // Group cells by consolidation for proper ID assignment
+      const consolidationGroups = {};
+      for (let i = 0; i < orphanedCells.length; i++) {
+        const consolidationIndex = i % consolidations.length;
+        const consolidation = consolidations[consolidationIndex];
+        
+        if (!consolidationGroups[consolidation._id]) {
+          consolidationGroups[consolidation._id] = {
+            consolidation: consolidation,
+            cells: []
+          };
+        }
+        consolidationGroups[consolidation._id].cells.push(orphanedCells[i]);
+      }
+      
+      // Assign cells to consolidations with proper IDs
+      for (const [consolidationId, group] of Object.entries(consolidationGroups)) {
+        const { consolidation, cells } = group;
+        
+        // Get highest existing cell ID in this consolidation
+        const existingCells = await Cell.find({ 
+          consolidationId: consolidation._id 
+        }).sort({ cellId: -1 });
+        
+        let nextCellId = existingCells.length > 0 ? existingCells[0].cellId + 1 : 0;
+        
+        for (const cell of cells) {
+          cell.consolidationId = consolidation._id;
+          cell.cellId = nextCellId++; // Assign consolidation-specific ID
+          await cell.save();
+          
+          // Add cell to consolidation's cellIds array
+          await Consolidation.findByIdAndUpdate(
+            consolidation._id,
+            { $push: { cellIds: cell._id } }
+          );
+          
+          console.log(`✅ Assigned cell to consolidation ${consolidation.consolidationId} as Cell ${cell.cellId}`);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error fixing cells:', error);
+    }
+  }
+
+  async regenerateCellEnergy() {
+    try {
+      // Increase energy for all normal cells (simulating feeding/rest)
+      const energyBoost = 10; // Gain 10 energy per cycle
+      
+      await Cell.updateMany(
+        { 
+          status: 'normal',
+          energyLevel: { $lt: 100 } // Don't exceed 100
+        },
+        { 
+          $inc: { energyLevel: energyBoost }
+        }
+      );
+      
+      // Cap energy at 100
+      await Cell.updateMany(
+        { energyLevel: { $gt: 100 } },
+        { $set: { energyLevel: 100 } }
+      );
+      
+      const boostedCount = await Cell.countDocuments({ status: 'normal', energyLevel: { $lte: 90 } });
+      if (boostedCount > 0) {
+        console.log(`⚡ Regenerated energy for ${boostedCount} cells (+${energyBoost} energy)`);
+      }
+    } catch (error) {
+      console.error('Error regenerating energy:', error);
+    }
+  }
+
+  async bootstrapSimulation() {
+    try {
+      await dbConnect();
+      
+      // Check if we need to bootstrap
+      const consolidationCount = await Consolidation.countDocuments();
+      const cellCount = await Cell.countDocuments();
+      
+      if (consolidationCount > 0 || cellCount > 0) {
+        console.log('✅ Consolidations/cells already exist, skipping bootstrap');
+        return;
+      }
+      
+      console.log('🚀 Bootstrapping simulation with initial consolidations and cells...');
+      
+      // Create 5 initial consolidations, each with 10-20 cells
+      for (let i = 0; i < 5; i++) {
+        const consolidationId = await this.getNextConsolidationId();
+        
+        // Create consolidation
+        const newConsolidation = new Consolidation({
+          consolidationId: consolidationId,
+          cellIds: [],
+          state: 'transparent'
+        });
+        
+        const savedConsolidation = await newConsolidation.save();
+        
+        // Create 10-20 cells for this consolidation
+        const cellCount = Math.floor(Math.random() * 11) + 10; // 10-20 cells
+        const cellIds = [];
+        
+        for (let j = 0; j < cellCount; j++) {
+          const cell = new Cell({
+            cellId: j, // Consolidation-specific ID starting from 0
+            consolidationId: savedConsolidation._id,
+            parentEntityIds: [], // Bootstrap cells have no parent entities
+            potentialTrait: this.getRandomTrait(),
+            energyLevel: Math.floor(Math.random() * 40) + 60, // 60-100 energy
+            status: 'normal'
+          });
+          
+          const savedCell = await cell.save();
+          cellIds.push(savedCell._id);
+        }
+        
+        // Update consolidation with cell IDs
+        savedConsolidation.cellIds = cellIds;
+        if (cellIds.length > 0) {
+          savedConsolidation.originCellId = cellIds[0]; // First cell is origin
+        }
+        await savedConsolidation.save();
+        
+        console.log(`📦 Created consolidation ${consolidationId} with ${cellCount} cells (Cell 0 to Cell ${cellCount - 1})`);
+      }
+      
+      console.log('✅ Bootstrap complete! Created 5 consolidations with cells ready to divide');
+    } catch (error) {
+      console.error('Error bootstrapping simulation:', error);
+    }
   }
 
   async generateBonds() {
@@ -109,10 +297,8 @@ class SimulationScheduler {
       await dbConnect();
       
       // Create a new cell from the completed bond (this becomes Cell 0 of new consolidation)
-      const newCellId = await this.getNextCellId();
-      
       const newCell = new Cell({
-        cellId: 0, // This is Cell 0 of the new consolidation
+        cellId: 0, // Always Cell 0 for new consolidation from bond
         parentEntityIds: [entityAId, entityBId],
         potentialTrait: this.getRandomTrait(),
         energyLevel: Math.floor(Math.random() * 50) + 50, // 50-100 energy
@@ -157,7 +343,7 @@ class SimulationScheduler {
         }
       );
 
-      console.log(`🧬 Bond completed: Created cell 0 (ID: ${savedCell.cellId}) in consolidation ${newConsolidationId} from entities ${entityAId} and ${entityBId}`);
+      console.log(`🧬 Bond completed: Created cell 0 in consolidation ${newConsolidationId} from entities ${entityAId} and ${entityBId}`);
       
     } catch (error) {
       console.error('Error completing bond:', error);
@@ -199,14 +385,14 @@ class SimulationScheduler {
           
           const nextCellIdInConsolidation = cellsInConsolidation.length > 0 
             ? cellsInConsolidation[0].cellId + 1 
-            : 1;
+            : 0; // Start from 0 if no cells (which shouldn't happen)
           
           // Generate random division duration (1-6 minutes, unaffected by multiplier)
           const divisionDuration = Math.floor(Math.random() * 300000) + 60000; // 60000-360000 ms
           
           // Create placeholder cell IMMEDIATELY with status: 'forming'
           const newCell = new Cell({
-            cellId: nextCellIdInConsolidation,
+            cellId: nextCellIdInConsolidation, // Use consolidation-specific ID
             parentEntityIds: cell.parentEntityIds, // Inherit parent entities
             consolidationId: cell.consolidationId,
             potentialTrait: this.getRandomTrait(),
@@ -291,6 +477,46 @@ class SimulationScheduler {
 
   // Entities are now ONLY created through consolidation evolution
   // This method has been removed - entities must evolve from consolidations with 50+ cells
+
+  async recoverStuckCells() {
+    try {
+      const now = new Date();
+      const maxDuration = 360000; // 6 minutes (max division duration)
+      const cutoffTime = new Date(now - maxDuration);
+      
+      // Find parent cells stuck in dividing state
+      const stuckParents = await Cell.find({
+        status: 'dividing',
+        divisionStartTime: { $lt: cutoffTime }
+      });
+      
+      // Find new cells stuck in forming state
+      const stuckChildren = await Cell.find({
+        status: 'forming',
+        divisionStartTime: { $lt: cutoffTime }
+      });
+      
+      if (stuckParents.length > 0 || stuckChildren.length > 0) {
+        console.log(`🔧 Recovering ${stuckParents.length} stuck parent cells and ${stuckChildren.length} stuck child cells`);
+        
+        // Complete stuck divisions
+        for (const parent of stuckParents) {
+          if (parent.resultingCellId) {
+            await this.completeDivision(parent._id, parent.resultingCellId);
+          }
+        }
+        
+        // Handle orphaned forming cells (parent lost)
+        for (const child of stuckChildren) {
+          child.status = 'normal';
+          await child.save();
+          console.log(`🔧 Recovered orphaned cell ${child.cellId}`);
+        }
+      }
+    } catch (error) {
+      console.error('Error recovering stuck cells:', error);
+    }
+  }
 
   async checkConsolidationEvolution(consolidationId, boostMode = false) {
     try {
@@ -392,6 +618,18 @@ class SimulationScheduler {
       
       await dbConnect();
       
+      // Debug current state
+      await this.debugCellStatus();
+      
+      // Fix any cells without consolidations
+      await this.fixExistingCells();
+      
+      // Recover any stuck cells from previous crashes/restarts
+      await this.recoverStuckCells();
+      
+      // Regenerate energy for cells
+      await this.regenerateCellEnergy();
+      
       // Check current entity count for balancing
       const currentEntityCount = await Entity.countDocuments();
       const targetEntitiesPerDay = 90;
@@ -436,20 +674,25 @@ class SimulationScheduler {
     console.log('🎯 Target: ~90 entities per day through biological evolution');
     console.log('⚡ Dynamic balancing: Boost mode activates when behind target');
     
-    // Schedule to run every 4 minutes
-    cron.schedule('*/4 * * * *', async () => {
-      await this.runSimulationCycle();
-    });
+    // Bootstrap on first start if needed
+    this.bootstrapSimulation().then(() => {
+      // Use setInterval instead of cron for reliability
+      this.intervalId = setInterval(async () => {
+        await this.runSimulationCycle();
+      }, 4 * 60 * 1000); // 4 minutes in milliseconds
 
-    // Run immediately on start for testing (after 15 seconds to allow DB connection)
-    setTimeout(() => {
-      this.runSimulationCycle();
-    }, 15000);
+      // Run first cycle after bootstrap (15 seconds delay)
+      setTimeout(() => {
+        this.runSimulationCycle();
+      }, 15000);
+    });
   }
 
   stop() {
     console.log('🛑 Stopping simulation scheduler');
-    cron.destroy();
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+    }
   }
 }
 
