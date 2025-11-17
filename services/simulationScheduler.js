@@ -133,13 +133,21 @@ class SimulationScheduler {
 
   async regenerateCellEnergy() {
     try {
-      // Increase energy for all normal cells (simulating feeding/rest)
+      // Get all active consolidations (transparent = cells can divide)
+      const activeConsolidations = await Consolidation.find({
+        state: 'transparent'
+      }).select('_id');
+      
+      const activeConsolidationIds = activeConsolidations.map(c => c._id);
+      
+      // Increase energy for all normal cells in active consolidations
       const energyBoost = 10; // Gain 10 energy per cycle
       
       await Cell.updateMany(
         { 
           status: 'normal',
-          energyLevel: { $lt: 100 } // Don't exceed 100
+          energyLevel: { $lt: 100 },
+          consolidationId: { $in: activeConsolidationIds } // Only cells in active consolidations
         },
         { 
           $inc: { energyLevel: energyBoost }
@@ -148,13 +156,21 @@ class SimulationScheduler {
       
       // Cap energy at 100
       await Cell.updateMany(
-        { energyLevel: { $gt: 100 } },
+        { 
+          energyLevel: { $gt: 100 },
+          consolidationId: { $in: activeConsolidationIds }
+        },
         { $set: { energyLevel: 100 } }
       );
       
-      const boostedCount = await Cell.countDocuments({ status: 'normal', energyLevel: { $lte: 90 } });
+      const boostedCount = await Cell.countDocuments({ 
+        status: 'normal', 
+        energyLevel: { $lte: 90 },
+        consolidationId: { $in: activeConsolidationIds }
+      });
+      
       if (boostedCount > 0) {
-        console.log(`⚡ Regenerated energy for ${boostedCount} cells (+${energyBoost} energy)`);
+        console.log(`⚡ Regenerated energy for ${boostedCount} cells (+${energyBoost} energy) in active consolidations`);
       }
     } catch (error) {
       console.error('Error regenerating energy:', error);
@@ -301,8 +317,8 @@ class SimulationScheduler {
         cellId: 0, // Always Cell 0 for new consolidation from bond
         parentEntityIds: [entityAId, entityBId],
         potentialTrait: this.getRandomTrait(),
-        energyLevel: Math.floor(Math.random() * 50) + 50, // 50-100 energy
-        status: 'forming' // Initially in forming state
+        energyLevel: Math.floor(Math.random() * 30) + 70, // 70-100 energy to ensure it can divide soon
+        status: 'normal' // Ready to divide immediately
       });
 
       const savedCell = await newCell.save();
@@ -313,14 +329,13 @@ class SimulationScheduler {
         consolidationId: newConsolidationId,
         originCellId: savedCell._id,
         cellIds: [savedCell._id],
-        state: 'transparent'
+        state: 'transparent' // Active consolidation ready for cell division
       });
 
       const savedConsolidation = await newConsolidation.save();
 
       // Update cell with consolidation reference
       savedCell.consolidationId = savedConsolidation._id;
-      savedCell.status = 'normal'; // Now ready for division
       await savedCell.save();
 
       // Update bond status
@@ -343,7 +358,8 @@ class SimulationScheduler {
         }
       );
 
-      console.log(`🧬 Bond completed: Created cell 0 in consolidation ${newConsolidationId} from entities ${entityAId} and ${entityBId}`);
+      console.log(`🧬 Bond completed: Created cell 0 (energy: ${savedCell.energyLevel}) in consolidation ${newConsolidationId} from entities ${entityAId} and ${entityBId}`);
+      console.log(`   New consolidation is transparent and ready for cell division`);
       
     } catch (error) {
       console.error('Error completing bond:', error);
@@ -361,26 +377,41 @@ class SimulationScheduler {
       const divisionChance = Math.min(1.0, baseDivisionChance * multiplierValue);
       
       // Get cells that might divide (high energy, normal status, within consolidations)
+      // IMPORTANT: Only get cells from consolidations that haven't evolved into entities
       const dividingCells = await Cell.find({ 
         status: 'normal', 
-        energyLevel: { $gt: 40 }, // Further lowered threshold for faster divisions
+        energyLevel: { $gt: 40 }, 
         consolidationId: { $exists: true, $ne: null }
-      }).limit(15); // Increased limit for more potential divisions
+      }).populate('consolidationId').limit(15);
 
-      if (dividingCells.length > 0) {
-        console.log(`🔬 Checking ${dividingCells.length} cells for division (${(divisionChance * 100).toFixed(1)}% chance with ${multiplierValue.toFixed(2)}x multiplier)`);
+      // Filter out cells from consolidations that have evolved
+      const activeCells = [];
+      for (const cell of dividingCells) {
+        if (cell.consolidationId && 
+            cell.consolidationId.state === 'transparent') { // Only transparent consolidations
+          activeCells.push(cell);
+        }
       }
 
-      for (const cell of dividingCells) {
+      if (activeCells.length > 0) {
+        console.log(`🔬 Checking ${activeCells.length} cells for division (${(divisionChance * 100).toFixed(1)}% chance with ${multiplierValue.toFixed(2)}x multiplier)`);
+      }
+
+      for (const cell of activeCells) {
         // Random chance of division - affected by multiplier
         if (Math.random() < divisionChance) {
           // Get consolidation to determine next cell ID within it
-          const consolidation = await Consolidation.findById(cell.consolidationId).populate('cellIds');
+          const consolidation = await Consolidation.findById(cell.consolidationId._id).populate('cellIds');
           if (!consolidation) continue;
+          
+          // Skip if consolidation has already evolved
+          if (consolidation.state === 'dense') {
+            continue;
+          }
 
           // Find the highest cellId in this consolidation
           const cellsInConsolidation = await Cell.find({ 
-            consolidationId: cell.consolidationId 
+            consolidationId: cell.consolidationId._id 
           }).sort({ cellId: -1 });
           
           const nextCellIdInConsolidation = cellsInConsolidation.length > 0 
@@ -394,7 +425,7 @@ class SimulationScheduler {
           const newCell = new Cell({
             cellId: nextCellIdInConsolidation, // Use consolidation-specific ID
             parentEntityIds: cell.parentEntityIds, // Inherit parent entities
-            consolidationId: cell.consolidationId,
+            consolidationId: cell.consolidationId._id,
             potentialTrait: this.getRandomTrait(),
             energyLevel: Math.floor(cell.energyLevel / 2), // Split energy
             status: 'forming', // Forming until division completes
@@ -415,7 +446,7 @@ class SimulationScheduler {
           
           // Update consolidation to include placeholder cell (but it's not active yet)
           await Consolidation.findByIdAndUpdate(
-            cell.consolidationId,
+            cell.consolidationId._id,
             { $push: { cellIds: savedNewCell._id } }
           );
           
@@ -528,24 +559,15 @@ class SimulationScheduler {
         status: 'normal'
       });
       
-      // If consolidation has 50+ normal cells, it can evolve to an entity
-      // Only check transparent consolidations (not already evolving)
+      // If consolidation has 50+ normal cells and is still transparent, it can evolve
       if (consolidation && normalCellsCount >= 50 && consolidation.state === 'transparent') {
         // Dynamic evolution chance - boost if behind target
         const baseChance = 0.25;
         const evolutionChance = boostMode ? Math.min(0.45, baseChance * 1.8) : baseChance;
         
         if (Math.random() < evolutionChance) {
-          // Mark consolidation as dense (pre-evolution state)  
-          consolidation.state = 'dense';
-          await consolidation.save();
-          
-          console.log(`🔄 Consolidation ${consolidation.consolidationId} evolved to dense state (${normalCellsCount} normal cells)`);
-          
-          // Schedule entity creation after some time (shorter than cycle interval)
-          setTimeout(async () => {
-            await this.evolveConsolidationToEntity(consolidationId);
-          }, Math.random() * 120000 + 60000); // 1-3 minutes
+          // Immediately evolve to entity (no delay needed)
+          await this.evolveConsolidationToEntity(consolidationId);
         }
       }
     } catch (error) {
@@ -558,9 +580,15 @@ class SimulationScheduler {
       await dbConnect();
       
       const consolidation = await Consolidation.findById(consolidationId);
-      // Prevent duplicate evolution - only evolve if still in 'dense' state
-      if (!consolidation || consolidation.state !== 'dense') {
-        console.log(`⚠️ Consolidation ${consolidationId} evolution skipped - already processed`);
+      // Prevent duplicate evolution - only evolve if still transparent
+      if (!consolidation || consolidation.state !== 'transparent') {
+        console.log(`⚠️ Consolidation ${consolidationId} evolution skipped - already evolved or not found`);
+        return;
+      }
+
+      // Check if entity was already created (extra safety check)
+      if (consolidation.evolvedToEntityId) {
+        console.log(`⚠️ Consolidation ${consolidationId} already has entity ${consolidation.evolvedToEntityId}`);
         return;
       }
 
@@ -570,17 +598,31 @@ class SimulationScheduler {
       const newEntity = new Entity({
         entityId: newEntityId,
         trait: this.getRandomTrait(),
-        generation: 1 // New entities start as Gen 1
+        generation: 1, // New entities start as Gen 1
+        sourceConsolidationId: consolidationId // Track which consolidation it came from
       });
 
       const savedEntity = await newEntity.save();
       
-      // Update consolidation
-      consolidation.state = 'entity_forming';
+      // Update consolidation - mark as dense (evolved, won't render in frontend)
+      consolidation.state = 'dense';
       consolidation.evolvedToEntityId = newEntityId;
+      consolidation.evolvedAt = new Date();
       await consolidation.save();
       
-      console.log(`✨ Consolidation ${consolidation.consolidationId} evolved into Entity ${newEntityId} with trait: ${savedEntity.trait}`);
+      // Mark all cells in this consolidation as 'inactive' (they're now part of the entity)
+      await Cell.updateMany(
+        { consolidationId: consolidationId },
+        { 
+          status: 'inactive',
+          inactiveReason: 'consolidation_evolved'
+        }
+      );
+      
+      const cellCount = await Cell.countDocuments({ consolidationId: consolidationId });
+      
+      console.log(`✨ Consolidation ${consolidation.consolidationId} (${cellCount} cells) evolved into Entity ${newEntityId} with trait: ${savedEntity.trait}`);
+      console.log(`   Consolidation marked as dense (won't render in frontend)`);
       
     } catch (error) {
       console.error('Error evolving consolidation to entity:', error);
@@ -651,14 +693,22 @@ class SimulationScheduler {
       
       // Get current counts
       const entityCount = await Entity.countDocuments();
-      const cellCount = await Cell.countDocuments();
+      const totalCellCount = await Cell.countDocuments();
+      const activeCellCount = await Cell.countDocuments({ status: { $ne: 'inactive' } });
+      const inactiveCellCount = await Cell.countDocuments({ status: 'inactive' });
       const normalCellCount = await Cell.countDocuments({ status: 'normal' });
       const formingCellCount = await Cell.countDocuments({ status: 'forming' });
       const dividingCellCount = await Cell.countDocuments({ status: 'dividing' });
-      const consolidationCount = await Consolidation.countDocuments();
+      const totalConsolidationCount = await Consolidation.countDocuments();
+      const transparentConsolidationCount = await Consolidation.countDocuments({ state: 'transparent' });
+      const denseConsolidationCount = await Consolidation.countDocuments({ state: 'dense' });
       const bondCount = await Bond.countDocuments();
       
-      console.log(`📊 Current totals - Entities: ${entityCount}, Cells: ${cellCount} (${normalCellCount} normal, ${formingCellCount} forming, ${dividingCellCount} dividing), Consolidations: ${consolidationCount}, Bonds: ${bondCount}`);
+      console.log(`📊 Current totals:`);
+      console.log(`   Entities: ${entityCount}`);
+      console.log(`   Cells: ${totalCellCount} total (${activeCellCount} active: ${normalCellCount} normal, ${formingCellCount} forming, ${dividingCellCount} dividing | ${inactiveCellCount} inactive)`);
+      console.log(`   Consolidations: ${totalConsolidationCount} total (${transparentConsolidationCount} transparent/active, ${denseConsolidationCount} dense/evolved)`);
+      console.log(`   Bonds: ${bondCount}`);
       console.log('✅ Simulation cycle completed\n');
       
     } catch (error) {

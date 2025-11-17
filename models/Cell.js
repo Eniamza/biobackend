@@ -10,12 +10,13 @@ const CellSchema = new mongoose.Schema({
   energyLevel: { type: Number, default: 0 }, // arbitrary number
   status: {
     type: String,
-    enum: ["normal", "forming", "dividing"],
+    enum: ["normal", "forming", "dividing", "inactive"],
     default: "normal"
   },
   divisionDuration: { type: Number }, // Duration in milliseconds (60000-360000 = 1-6 minutes)
   divisionStartTime: { type: Date }, // ISO timestamp when division started
-  resultingCellId: { type: mongoose.Schema.Types.ObjectId, ref: "Cell" } // The new cell created from division
+  resultingCellId: { type: mongoose.Schema.Types.ObjectId, ref: "Cell" }, // The new cell created from division
+  inactiveReason: { type: String } // reason for being inactive
 });
 
 const Cell = mongoose.model("Cell", CellSchema);

@@ -6,11 +6,12 @@ const ConsolidationSchema = new mongoose.Schema({
   cellIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "Cell" }],
   state: { 
     type: String, 
-    enum: ["transparent", "dense", "entity_forming"], 
+    enum: ["transparent", "dense"], // transparent = active, dense = evolved (won't render)
     default: "transparent" 
   },
   createdAt: { type: Date, default: Date.now },
-  evolvedToEntityId: { type: Number, default: null } // if turned into entity
+  evolvedToEntityId: { type: Number, default: null }, // if turned into entity
+  evolvedAt: { type: Date, default: null } // when it evolved into entity
 });
 
 const Consolidation = mongoose.model("Consolidation", ConsolidationSchema);
