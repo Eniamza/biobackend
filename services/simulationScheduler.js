@@ -512,21 +512,51 @@ class SimulationScheduler {
   async recoverStuckCells() {
     try {
       const now = new Date();
-      const maxDuration = 360000; // 6 minutes (max division duration)
-      const cutoffTime = new Date(now - maxDuration);
+      const maxDivisionDuration = 360000; // 6 minutes (max division duration)
+      const divisionCutoffTime = new Date(now - maxDivisionDuration);
       
-      // Find parent cells stuck in dividing state
+      console.log('🔍 Checking for stuck cells and consolidations...');
+      
+      // 1. Find parent cells stuck in dividing state
       const stuckParents = await Cell.find({
         status: 'dividing',
-        divisionStartTime: { $lt: cutoffTime }
+        divisionStartTime: { $lt: divisionCutoffTime }
       });
       
-      // Find new cells stuck in forming state
+      // 2. Find new cells stuck in forming state
       const stuckChildren = await Cell.find({
         status: 'forming',
-        divisionStartTime: { $lt: cutoffTime }
+        divisionStartTime: { $lt: divisionCutoffTime }
       });
       
+      // 3. Find cells in dividing/forming that should have completed by now
+      const pendingDivisions = await Cell.find({
+        $or: [
+          { status: 'dividing' },
+          { status: 'forming' }
+        ],
+        divisionStartTime: { $exists: true },
+        divisionDuration: { $exists: true }
+      });
+      
+      // Check each pending division
+      for (const cell of pendingDivisions) {
+        const expectedCompletionTime = new Date(cell.divisionStartTime.getTime() + cell.divisionDuration);
+        
+        if (now >= expectedCompletionTime) {
+          // Division should have completed
+          if (cell.status === 'dividing' && cell.resultingCellId) {
+            console.log(`🔧 Completing overdue division: Cell ${cell.cellId} → Cell ID ${cell.resultingCellId}`);
+            await this.completeDivision(cell._id, cell.resultingCellId);
+          } else if (cell.status === 'forming') {
+            console.log(`🔧 Completing overdue formation: Cell ${cell.cellId}`);
+            cell.status = 'normal';
+            await cell.save();
+          }
+        }
+      }
+      
+      // 4. Handle truly stuck cells (no completion data)
       if (stuckParents.length > 0 || stuckChildren.length > 0) {
         console.log(`🔧 Recovering ${stuckParents.length} stuck parent cells and ${stuckChildren.length} stuck child cells`);
         
@@ -534,6 +564,12 @@ class SimulationScheduler {
         for (const parent of stuckParents) {
           if (parent.resultingCellId) {
             await this.completeDivision(parent._id, parent.resultingCellId);
+          } else {
+            // No resulting cell found, just reset parent
+            parent.status = 'normal';
+            parent.energyLevel = Math.min(100, parent.energyLevel + 20);
+            await parent.save();
+            console.log(`🔧 Reset stuck parent cell ${parent.cellId} (no resulting cell)`);
           }
         }
         
@@ -544,6 +580,89 @@ class SimulationScheduler {
           console.log(`🔧 Recovered orphaned cell ${child.cellId}`);
         }
       }
+      
+      // 5. Recover consolidations stuck in 'dense' state
+      const maxEvolutionWait = 180000; // 3 minutes (max time to evolve)
+      const evolutionCutoffTime = new Date(now - maxEvolutionWait);
+      
+      const stuckDenseConsolidations = await Consolidation.find({
+        state: 'dense',
+        updatedAt: { $lt: evolutionCutoffTime }
+      });
+      
+      if (stuckDenseConsolidations.length > 0) {
+        console.log(`🔧 Recovering ${stuckDenseConsolidations.length} consolidations stuck in 'dense' state`);
+        
+        for (const consolidation of stuckDenseConsolidations) {
+          // Check if entity was already created but consolidation wasn't updated
+          if (consolidation.evolvedToEntityId) {
+            const entity = await Entity.findOne({ entityId: consolidation.evolvedToEntityId });
+            if (entity) {
+              // Entity exists, just update consolidation state
+              consolidation.state = 'entity_formed';
+              if (!consolidation.evolvedAt) {
+                consolidation.evolvedAt = new Date();
+              }
+              await consolidation.save();
+              console.log(`✅ Fixed consolidation ${consolidation.consolidationId} - entity ${consolidation.evolvedToEntityId} already exists`);
+            } else {
+              // Entity missing, recreate it
+              await this.evolveConsolidationToEntity(consolidation._id);
+            }
+          } else {
+            // No entity created yet, complete the evolution
+            await this.evolveConsolidationToEntity(consolidation._id);
+          }
+        }
+      }
+      
+      // 6. Find and complete stuck bonds
+      const activeBonds = await Bond.find({
+        status: 'active',
+        createdAt: { $exists: true },
+        duration: { $exists: true }
+      });
+      
+      for (const bond of activeBonds) {
+        // createdAt is stored as number (timestamp), not Date
+        const bondCreatedTime = typeof bond.createdAt === 'number' ? bond.createdAt : bond.createdAt.getTime();
+        const expectedCompletionTime = new Date(bondCreatedTime + bond.duration);
+        
+        if (now >= expectedCompletionTime) {
+          console.log(`🔧 Completing overdue bond: Entity ${bond.entityA} + Entity ${bond.entityB}`);
+          await this.completeBond(bond._id, bond.entityA, bond.entityB);
+        }
+      }
+      
+      // 7. Clean up any orphaned entities stuck in bonding state
+      const stuckBondingEntities = await Entity.find({
+        currentlyBondingWith: { $ne: null }
+      });
+      
+      for (const entity of stuckBondingEntities) {
+        // Check if there's an active bond for this entity
+        const activeBond = await Bond.findOne({
+          $or: [
+            { entityA: entity.entityId, status: 'active' },
+            { entityB: entity.entityId, status: 'active' }
+          ]
+        });
+        
+        if (!activeBond) {
+          // No active bond found, free up the entity
+          entity.currentlyBondingWith = null;
+          await entity.save();
+          console.log(`🔧 Freed stuck bonding entity ${entity.entityId}`);
+        }
+      }
+      
+      const recoveryCount = pendingDivisions.length + stuckDenseConsolidations.length + activeBonds.length;
+      if (recoveryCount > 0) {
+        console.log(`✅ Recovery complete: Processed ${recoveryCount} pending operations`);
+      } else {
+        console.log(`✅ No stuck operations found - system is healthy`);
+      }
+      
     } catch (error) {
       console.error('Error recovering stuck cells:', error);
     }
@@ -723,6 +842,7 @@ class SimulationScheduler {
     console.log('🧬 Entities can ONLY be created through consolidation evolution (50+ cells)');
     console.log('🎯 Target: ~90 entities per day through biological evolution');
     console.log('⚡ Dynamic balancing: Boost mode activates when behind target');
+    console.log('🔧 Recovery system: Automatically completes pending operations on restart');
     
     // Bootstrap on first start if needed
     this.bootstrapSimulation().then(() => {
@@ -731,10 +851,10 @@ class SimulationScheduler {
         await this.runSimulationCycle();
       }, 4 * 60 * 1000); // 4 minutes in milliseconds
 
-      // Run first cycle after bootstrap (15 seconds delay)
+      // Run first cycle immediately to recover any stuck operations
       setTimeout(() => {
         this.runSimulationCycle();
-      }, 15000);
+      }, 5000); // 5 seconds to allow DB connection
     });
   }
 
