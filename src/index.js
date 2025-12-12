@@ -6,6 +6,7 @@ import { cell } from './routes/cell.js';
 import { consolidation } from './routes/consolidation.js';
 import { bond } from './routes/bond.js';
 import { simulation } from './routes/simulation.js';
+import { chat } from './routes/chat.js';
 import SimulationScheduler from '../services/simulationScheduler.js';
 
 
@@ -16,6 +17,7 @@ const app = new Hono()
   .route('/api/v1/consolidation', consolidation)
   .route('/api/v1/bond', bond)
   .route('/api/v1/simulation', simulation)
+  .route('/api/v1/chat', chat);
 
 // Initialize the simulation scheduler
 const scheduler = new SimulationScheduler();

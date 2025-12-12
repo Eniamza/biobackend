@@ -244,7 +244,7 @@ class SimulationScheduler {
       // Get entities that are not currently bonding
       const availableEntities = await Entity.find({ 
         currentlyBondingWith: null 
-      }).limit(10);
+      })
       
       if (availableEntities.length < 2) {
         console.log('Not enough entities available to form bonds');
@@ -382,7 +382,7 @@ class SimulationScheduler {
         status: 'normal', 
         energyLevel: { $gt: 40 }, 
         consolidationId: { $exists: true, $ne: null }
-      }).populate('consolidationId').limit(15);
+      }).populate('consolidationId');
 
       // Filter out cells from consolidations that have evolved
       const activeCells = [];
