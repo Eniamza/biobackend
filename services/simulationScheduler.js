@@ -592,7 +592,6 @@ class SimulationScheduler {
       
       if (stuckDenseConsolidations.length > 0) {
         console.log(`🔧 Recovering ${stuckDenseConsolidations.length} consolidations stuck in 'dense' state`);
-        
         for (const consolidation of stuckDenseConsolidations) {
           // Check if entity was already created but consolidation wasn't updated
           if (consolidation.evolvedToEntityId) {
@@ -613,6 +612,14 @@ class SimulationScheduler {
             // No entity created yet, complete the evolution
             await this.evolveConsolidationToEntity(consolidation._id);
           }
+          // SAFETY: Mark all cells as inactive if consolidation is evolved
+          await Cell.updateMany(
+            { consolidationId: consolidation._id },
+            {
+              status: 'inactive',
+              inactiveReason: 'consolidation_evolved'
+            }
+          );
         }
       }
       
