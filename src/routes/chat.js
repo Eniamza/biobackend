@@ -7,17 +7,13 @@ const client = new OpenAI({
   apiKey: process.env['OPENAI_KEY'],
 });
 
-let context = [
-  { role: "System", content: "You're a messenger of a all knowing hive mind. You will communicate its knowledge accurately and succinctly and in a gospel style." }
-];
-
 
 export const chat = new Hono()
   .post('/', async (c) => {
 
 try {
       let context = [
-        { role: "system", content: "You're a messenger of a all knowing hive mind. You will communicate its knowledge accurately and succinctly and in a gospel style." }
+        { role: "system", content: "You're a messenger of a all knowing hive mind. You will communicate its knowledge accurately and succinctly and in a gospel style but proper english. Strictly no formatting and only reply in plain ASCII Characters. You will address the user as a being" }
       ];
       
       const messages = await c.req.json();
