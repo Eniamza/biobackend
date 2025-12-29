@@ -194,4 +194,120 @@ export const simulation = new Hono()
         error: error.message
       }, 500);
     }
+  })
+
+  // Get all active data (cells, bonds, consolidations)
+  .get('/active/all', async (c) => {
+    try {
+      await dbConnect();
+
+      // Fetch all active data in parallel
+      const [cells, bonds, consolidations, entities, multiplier] = await Promise.all([
+        Cell.find({ status: { $in: ['normal', 'forming', 'dividing'] } }).lean(),
+        Bond.find({ status: 'active' }).lean(),
+        Consolidation.find({ state: { $in: ['transparent', 'dense'] } })
+          .populate('cellIds', 'cellId status energyLevel')
+          .populate('originCellId', 'cellId')
+          .lean(),
+        Entity.find({}).lean(),
+        Multiplier.findOne().sort({ timestamp: -1 }).lean()
+      ]);
+
+      // Calculate stats
+      const stats = {
+        totalCells: cells.length,
+        totalBonds: bonds.length,
+        totalConsolidations: consolidations.length,
+        totalEntities: entities.length,
+        activeBonds: bonds.length,
+        formingCells: cells.filter(cell => cell.status === 'forming').length,
+        dividingCells: cells.filter(cell => cell.status === 'dividing').length,
+        transparentConsolidations: consolidations.filter(cons => cons.state === 'transparent').length,
+        denseConsolidations: consolidations.filter(cons => cons.state === 'dense').length,
+        currentMultiplier: multiplier?.multiplier || 1.0,
+        marketCap: multiplier?.marketCap || 0,
+        lastUpdated: new Date().toISOString()
+      };
+
+      return c.json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        stats,
+        data: {
+          cells,
+          bonds,
+          consolidations,
+          entities,
+          multiplier
+        }
+      });
+
+    } catch (error) {
+      console.error('Error fetching active data:', error);
+      return c.json({
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      }, 500);
+    }
+  })
+
+  // Get active cells only
+  .get('/active/cells', async (c) => {
+    try {
+      await dbConnect();
+      const cells = await Cell.find({ status: { $in: ['normal', 'forming', 'dividing'] } }).lean();
+      
+      return c.json({
+        success: true,
+        count: cells.length,
+        data: cells
+      });
+    } catch (error) {
+      return c.json({
+        success: false,
+        error: error.message
+      }, 500);
+    }
+  })
+
+  // Get active consolidations only
+  .get('/active/consolidations', async (c) => {
+    try {
+      await dbConnect();
+      const consolidations = await Consolidation.find({ state: { $in: ['transparent', 'dense'] } })
+        .populate('cellIds', 'cellId status energyLevel')
+        .populate('originCellId', 'cellId')
+        .lean();
+      
+      return c.json({
+        success: true,
+        count: consolidations.length,
+        data: consolidations
+      });
+    } catch (error) {
+      return c.json({
+        success: false,
+        error: error.message
+      }, 500);
+    }
+  })
+
+  // Get active bonds only
+  .get('/active/bonds', async (c) => {
+    try {
+      await dbConnect();
+      const bonds = await Bond.find({ status: 'active' }).lean();
+      
+      return c.json({
+        success: true,
+        count: bonds.length,
+        data: bonds
+      });
+    } catch (error) {
+      return c.json({
+        success: false,
+        error: error.message
+      }, 500);
+    }
   });
