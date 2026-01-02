@@ -203,7 +203,10 @@ export const simulation = new Hono()
 
       // Fetch all active data in parallel
       const [cells, bonds, consolidations, entities, multiplier] = await Promise.all([
-        Cell.find({ status: { $in: ['normal', 'forming', 'dividing'] } }).lean(),
+        Cell.find({ 
+          status: { $in: ['normal', 'forming', 'dividing'] },
+          inactiveReason: { $ne: 'consolidation_evolved' }
+        }).lean(),
         Bond.find({ status: 'active' }).lean(),
         Consolidation.find({ state: { $in: ['transparent', 'dense'] } })
           .populate('cellIds', 'cellId status energyLevel')
@@ -256,7 +259,10 @@ export const simulation = new Hono()
   .get('/active/cells', async (c) => {
     try {
       await dbConnect();
-      const cells = await Cell.find({ status: { $in: ['normal', 'forming', 'dividing'] } }).lean();
+      const cells = await Cell.find({ 
+        status: { $in: ['normal', 'forming', 'dividing'] },
+        inactiveReason: { $ne: 'consolidation_evolved' }
+      }).lean();
       
       return c.json({
         success: true,
