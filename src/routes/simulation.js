@@ -6,6 +6,10 @@ import Consolidation from '../../models/Consolidation.js';
 import Entity from '../../models/Entity.js';
 import Multiplier from '../../models/Multiplier.js';
 
+let activeAllCache = null;
+let activeAllCacheTime = null;
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes in milliseconds
+
 export const simulation = new Hono()
   // Get all simulation data
   .get('/all', async (c) => {
@@ -199,6 +203,11 @@ export const simulation = new Hono()
   // Get all active data (cells, bonds, consolidations)
   .get('/active/all', async (c) => {
     try {
+      const now = Date.now();
+      if (activeAllCache && activeAllCacheTime && (now - activeAllCacheTime < CACHE_TTL)) {
+        return c.json(activeAllCache);
+      }
+
       await dbConnect();
 
       // Fetch all active data in parallel
@@ -230,7 +239,7 @@ export const simulation = new Hono()
         lastUpdated: new Date().toISOString()
       };
 
-      return c.json({
+      const responseData = {
         success: true,
         timestamp: new Date().toISOString(),
         stats,
@@ -241,7 +250,12 @@ export const simulation = new Hono()
           entities,
           multiplier
         }
-      });
+      };
+
+      activeAllCache = responseData;
+      activeAllCacheTime = now;
+
+      return c.json(responseData);
 
     } catch (error) {
       console.error('Error fetching active data:', error);
