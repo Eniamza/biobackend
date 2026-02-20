@@ -2,6 +2,9 @@ import { Hono } from 'hono';
 import { dbConnect } from '../../lib/db.js';
 import Bond from '../../models/Bond.js';
 import mongoose from 'mongoose';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 export const bond = new Hono()
   .get('/:id', async (c) => {
