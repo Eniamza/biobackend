@@ -10,5 +10,7 @@ const BondSchema = new mongoose.Schema({
   resultingCellId: { type: mongoose.Schema.Types.ObjectId, ref: "Cell" }
 });
 
+BondSchema.index({ status: 1 });
+
 const Bond = mongoose.model("Bond", BondSchema);
 export default Bond;

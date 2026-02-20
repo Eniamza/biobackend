@@ -19,5 +19,7 @@ const CellSchema = new mongoose.Schema({
   inactiveReason: { type: String } // reason for being inactive
 });
 
+CellSchema.index({ status: 1, inactiveReason: 1 });
+
 const Cell = mongoose.model("Cell", CellSchema);
 export default Cell;

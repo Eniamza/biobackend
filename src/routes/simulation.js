@@ -65,7 +65,7 @@ export const simulation = new Hono()
     try {
       await dbConnect();
       const cells = await Cell.find({}).lean();
-      
+
       return c.json({
         success: true,
         count: cells.length,
@@ -84,7 +84,7 @@ export const simulation = new Hono()
     try {
       await dbConnect();
       const bonds = await Bond.find({}).lean();
-      
+
       return c.json({
         success: true,
         count: bonds.length,
@@ -106,7 +106,7 @@ export const simulation = new Hono()
         .populate('cellIds', 'cellId status energyLevel')
         .populate('originCellId', 'cellId')
         .lean();
-      
+
       return c.json({
         success: true,
         count: consolidations.length,
@@ -125,7 +125,7 @@ export const simulation = new Hono()
     try {
       await dbConnect();
       const entities = await Entity.find({}).lean();
-      
+
       return c.json({
         success: true,
         count: entities.length,
@@ -203,16 +203,14 @@ export const simulation = new Hono()
 
       // Fetch all active data in parallel
       const [cells, bonds, consolidations, entities, multiplier] = await Promise.all([
-        Cell.find({ 
+        Cell.find({
           status: { $in: ['normal', 'forming', 'dividing'] },
           inactiveReason: { $ne: 'consolidation_evolved' }
-        }).lean(),
-        Bond.find({ status: 'active' }).lean(),
+        }).select('level energyLevel consolidationId status').lean(),
+        Bond.find({ status: 'active' }).select('entityA entityB status').lean(),
         Consolidation.find({ state: { $in: ['transparent', 'dense'] } })
-          .populate('cellIds', 'cellId status energyLevel')
-          .populate('originCellId', 'cellId')
-          .lean(),
-        Entity.find({}).lean(),
+          .select('consolidationId cellIds state').lean(),
+        Entity.find({}).select('entityId trait originTimestamp age').lean(),
         Multiplier.findOne().sort({ timestamp: -1 }).lean()
       ]);
 
@@ -259,11 +257,11 @@ export const simulation = new Hono()
   .get('/active/cells', async (c) => {
     try {
       await dbConnect();
-      const cells = await Cell.find({ 
+      const cells = await Cell.find({
         status: { $in: ['normal', 'forming', 'dividing'] },
         inactiveReason: { $ne: 'consolidation_evolved' }
       }).lean();
-      
+
       return c.json({
         success: true,
         count: cells.length,
@@ -285,7 +283,7 @@ export const simulation = new Hono()
         .populate('cellIds', 'cellId status energyLevel')
         .populate('originCellId', 'cellId')
         .lean();
-      
+
       return c.json({
         success: true,
         count: consolidations.length,
@@ -304,7 +302,7 @@ export const simulation = new Hono()
     try {
       await dbConnect();
       const bonds = await Bond.find({ status: 'active' }).lean();
-      
+
       return c.json({
         success: true,
         count: bonds.length,

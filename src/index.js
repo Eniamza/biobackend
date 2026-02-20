@@ -9,9 +9,10 @@ import { simulation } from './routes/simulation.js';
 import { chat } from './routes/chat.js';
 import SimulationScheduler from '../services/simulationScheduler.js';
 
-
+import { compress } from 'hono/compress';
 
 const app = new Hono()
+  .use('*', compress())
   .route('/api/v1/entity', entity)
   .route('/api/v1/cell', cell)
   .route('/api/v1/consolidation', consolidation)
