@@ -6,9 +6,78 @@ import Consolidation from '../../models/Consolidation.js';
 import Entity from '../../models/Entity.js';
 import Multiplier from '../../models/Multiplier.js';
 
-let activeAllCache = null;
+let activeAllCacheString = null;
 let activeAllCacheTime = null;
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes in milliseconds
+let isUpdatingCache = false;
+
+const updateActiveAllCache = async () => {
+  if (isUpdatingCache) return;
+  isUpdatingCache = true;
+  try {
+    const now = Date.now();
+    await dbConnect();
+
+    // Fetch all active data in parallel
+    const [cells, bonds, consolidations, entities, multiplier] = await Promise.all([
+      Cell.find({
+        status: { $in: ['normal', 'forming', 'dividing'] },
+        inactiveReason: { $ne: 'consolidation_evolved' }
+      }).select('level energyLevel consolidationId status').lean(),
+      Bond.find({ status: 'active' }).select('entityA entityB status').lean(),
+      Consolidation.find({ state: { $in: ['transparent', 'dense'] } })
+        .select('consolidationId cellIds state').lean(),
+      Entity.find({}).select('entityId trait originTimestamp age').lean(),
+      Multiplier.findOne().sort({ timestamp: -1 }).lean()
+    ]);
+
+    // Calculate stats
+    const stats = {
+      totalCells: cells.length,
+      totalBonds: bonds.length,
+      totalConsolidations: consolidations.length,
+      totalEntities: entities.length,
+      activeBonds: bonds.length,
+      formingCells: cells.filter(cell => cell.status === 'forming').length,
+      dividingCells: cells.filter(cell => cell.status === 'dividing').length,
+      transparentConsolidations: consolidations.filter(cons => cons.state === 'transparent').length,
+      denseConsolidations: consolidations.filter(cons => cons.state === 'dense').length,
+      currentMultiplier: multiplier?.multiplier || 1.0,
+      marketCap: multiplier?.marketCap || 0,
+      lastUpdated: new Date().toISOString()
+    };
+
+    const responseData = {
+      success: true,
+      timestamp: new Date().toISOString(),
+      stats,
+      data: {
+        cells,
+        bonds,
+        consolidations,
+        entities,
+        multiplier
+      }
+    };
+
+    activeAllCacheString = JSON.stringify(responseData);
+    activeAllCacheTime = now;
+    console.log(`[Cache] /active/all cache refreshed successfully.`);
+  } catch (error) {
+    console.error('Error background updating active cache:', error);
+  } finally {
+    isUpdatingCache = false;
+  }
+};
+
+// Initial background update and periodic interval checking
+updateActiveAllCache();
+setInterval(() => {
+  const now = Date.now();
+  if (!activeAllCacheTime || (now - activeAllCacheTime >= CACHE_TTL)) {
+    updateActiveAllCache();
+  }
+}, 10000); // Check every 10 seconds if it needs updating
 
 export const simulation = new Hono()
   // Get all simulation data
@@ -203,62 +272,19 @@ export const simulation = new Hono()
   // Get all active data (cells, bonds, consolidations)
   .get('/active/all', async (c) => {
     try {
-      const now = Date.now();
-      if (activeAllCache && activeAllCacheTime && (now - activeAllCacheTime < CACHE_TTL)) {
-        return c.json(activeAllCache);
+      if (!activeAllCacheString) {
+        // Fallback waiting for cache or building on the fly if incredibly eager
+        await updateActiveAllCache();
       }
 
-      await dbConnect();
+      if (activeAllCacheString) {
+        c.header('Content-Type', 'application/json; charset=utf-8');
+        return c.body(activeAllCacheString);
+      }
 
-      // Fetch all active data in parallel
-      const [cells, bonds, consolidations, entities, multiplier] = await Promise.all([
-        Cell.find({
-          status: { $in: ['normal', 'forming', 'dividing'] },
-          inactiveReason: { $ne: 'consolidation_evolved' }
-        }).select('level energyLevel consolidationId status').lean(),
-        Bond.find({ status: 'active' }).select('entityA entityB status').lean(),
-        Consolidation.find({ state: { $in: ['transparent', 'dense'] } })
-          .select('consolidationId cellIds state').lean(),
-        Entity.find({}).select('entityId trait originTimestamp age').lean(),
-        Multiplier.findOne().sort({ timestamp: -1 }).lean()
-      ]);
-
-      // Calculate stats
-      const stats = {
-        totalCells: cells.length,
-        totalBonds: bonds.length,
-        totalConsolidations: consolidations.length,
-        totalEntities: entities.length,
-        activeBonds: bonds.length,
-        formingCells: cells.filter(cell => cell.status === 'forming').length,
-        dividingCells: cells.filter(cell => cell.status === 'dividing').length,
-        transparentConsolidations: consolidations.filter(cons => cons.state === 'transparent').length,
-        denseConsolidations: consolidations.filter(cons => cons.state === 'dense').length,
-        currentMultiplier: multiplier?.multiplier || 1.0,
-        marketCap: multiplier?.marketCap || 0,
-        lastUpdated: new Date().toISOString()
-      };
-
-      const responseData = {
-        success: true,
-        timestamp: new Date().toISOString(),
-        stats,
-        data: {
-          cells,
-          bonds,
-          consolidations,
-          entities,
-          multiplier
-        }
-      };
-
-      activeAllCache = responseData;
-      activeAllCacheTime = now;
-
-      return c.json(responseData);
-
+      return c.json({ success: false, error: 'Cache warm-up failed' }, 500);
     } catch (error) {
-      console.error('Error fetching active data:', error);
+      console.error('Error serving active data cache:', error);
       return c.json({
         success: false,
         error: error.message,
