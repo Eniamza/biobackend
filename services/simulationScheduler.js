@@ -261,13 +261,16 @@ class SimulationScheduler {
         ? 1.0 
         : Math.min(0.80, baseBondChance * multiplierValue);
       
-      // We process multiple pairs to allow more entities to bond at the same time
-      // Shuffle available entities for randomness
+      // We randomly choose between 4-10 entities in each cycle, or scale up in hyper boost
       const shuffledEntities = availableEntities.sort(() => 0.5 - Math.random());
       
+      let baseTargetPairs = process.env.HYPER_BOOST === 'true' 
+        ? Math.floor(shuffledEntities.length / 2) // pair up as many entities as possible
+        : Math.floor(Math.random() * 4) + 2; // Math.random() * (maxPairs(5)-minPairs(2)) + minPairs(2) = 2-5 pairs (4-10 entities)
+        
       const maxBonds = process.env.HYPER_BOOST === 'true' 
-        ? Math.floor(shuffledEntities.length / 2) // In hyper boost, pair up as many entities as possible
-        : Math.max(1, Math.floor((shuffledEntities.length / 2) * bondChance)); // Scale normally
+        ? baseTargetPairs 
+        : Math.min(Math.floor(shuffledEntities.length / 2), baseTargetPairs); 
         
       let createdBondsCount = 0;
       
@@ -479,7 +482,9 @@ class SimulationScheduler {
           
           // Check if consolidation should evolve to entity
           const currentEntityCount = await Entity.countDocuments();
-          const targetEntitiesPerDay = 90;
+          const targetEntitiesPerDay = process.env.TARGET_ENTITIES_PER_DAY 
+            ? parseInt(process.env.TARGET_ENTITIES_PER_DAY, 10) 
+            : 90;
           const currentDate = new Date();
           const expectedEntitiesByNow = Math.floor(targetEntitiesPerDay * (currentDate.getHours() * 60 + currentDate.getMinutes()) / 1440);
           const boostMode = currentEntityCount < expectedEntitiesByNow * 0.8; // Boost if we're at <80% of target
@@ -822,7 +827,9 @@ class SimulationScheduler {
       
       // Check current entity count for balancing
       const currentEntityCount = await Entity.countDocuments();
-      const targetEntitiesPerDay = 90;
+      const targetEntitiesPerDay = process.env.TARGET_ENTITIES_PER_DAY 
+        ? parseInt(process.env.TARGET_ENTITIES_PER_DAY, 10) 
+        : 90;
       const currentDate = new Date();
       const dayOfYear = Math.floor((currentDate - new Date(currentDate.getFullYear(), 0, 0)) / 86400000);
       const expectedEntitiesByNow = Math.floor(targetEntitiesPerDay * (dayOfYear + (currentDate.getHours() * 60 + currentDate.getMinutes()) / 1440));
@@ -869,7 +876,7 @@ class SimulationScheduler {
   start() {
     console.log('🚀 Starting simulation scheduler - runs every 4 minutes');
     console.log('🧬 Entities can ONLY be created through consolidation evolution (50+ cells)');
-    console.log('🎯 Target: ~90 entities per day through biological evolution');
+    console.log(`🎯 Target: ~${process.env.TARGET_ENTITIES_PER_DAY || 90} entities per day through biological evolution`);
     console.log('⚡ Dynamic balancing: Boost mode activates when behind target');
     console.log('🔧 Recovery system: Automatically completes pending operations on restart');
     
