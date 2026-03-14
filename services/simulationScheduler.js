@@ -244,7 +244,7 @@ class SimulationScheduler {
       // Get entities that are not currently bonding
       const availableEntities = await Entity.find({ 
         currentlyBondingWith: null 
-      })
+      });
       
       if (availableEntities.length < 2) {
         console.log('Not enough entities available to form bonds');
@@ -261,54 +261,64 @@ class SimulationScheduler {
         ? 1.0 
         : Math.min(0.80, baseBondChance * multiplierValue);
       
-      // Random chance of bond formation - affected by multiplier
-      if (Math.random() > bondChance) {
-        return;
-      }
-
-      // Randomly select 2 entities to bond
-      const entity1 = availableEntities[Math.floor(Math.random() * availableEntities.length)];
-      let entity2 = availableEntities[Math.floor(Math.random() * availableEntities.length)];
+      // We process multiple pairs to allow more entities to bond at the same time
+      // Shuffle available entities for randomness
+      const shuffledEntities = availableEntities.sort(() => 0.5 - Math.random());
       
-      // Ensure different entities
-      while (entity1._id.toString() === entity2._id.toString() && availableEntities.length > 1) {
-        entity2 = availableEntities[Math.floor(Math.random() * availableEntities.length)];
-      }
-
-      if (entity1._id.toString() === entity2._id.toString()) {
-        return;
-      }
-
-      // Create bond record
-      const bondDuration = process.env.HYPER_BOOST === 'true' 
-        ? 100 
-        : Math.floor(Math.random() * 300000) + 60000; // 1-5 minutes normally
+      const maxBonds = process.env.HYPER_BOOST === 'true' 
+        ? Math.floor(shuffledEntities.length / 2) // In hyper boost, pair up as many entities as possible
+        : Math.max(1, Math.floor((shuffledEntities.length / 2) * bondChance)); // Scale normally
         
-      const bond = new Bond({
-        entityA: entity1.entityId,
-        entityB: entity2.entityId,
-        duration: bondDuration,
-        status: 'active'
-      });
+      let createdBondsCount = 0;
+      
+      for (let i = 0; i < maxBonds * 2; i += 2) {
+        if (i + 1 >= shuffledEntities.length) break;
+        
+        // Random chance for this specific bond
+        if (process.env.HYPER_BOOST !== 'true' && Math.random() > bondChance) continue;
+        
+        const entity1 = shuffledEntities[i];
+        const entity2 = shuffledEntities[i+1];
+        
+        // Ensure different entities (though shuffle already guarantees unique instances)
+        if (entity1._id.toString() === entity2._id.toString()) continue;
 
-      // Update entities to show they're bonding
-      entity1.currentlyBondingWith = entity2.entityId;
-      entity2.currentlyBondingWith = entity1.entityId;
+        // Force entities to bond for longer in hyper boost (e.g., 5-10 minutes)
+        const bondDuration = process.env.HYPER_BOOST === 'true' 
+          ? Math.floor(Math.random() * 300000) + 300000 // 5-10 minutes
+          : Math.floor(Math.random() * 300000) + 60000;  // 1-5 minutes normally
+          
+        const bond = new Bond({
+          entityA: entity1.entityId,
+          entityB: entity2.entityId,
+          duration: bondDuration,
+          status: 'active'
+        });
 
-      await Promise.all([
-        bond.save(),
-        entity1.save(),
-        entity2.save()
-      ]);
+        // Update entities to show they're bonding
+        entity1.currentlyBondingWith = entity2.entityId;
+        entity2.currentlyBondingWith = entity1.entityId;
 
-      console.log(`🔗 Bond formed between entities ${entity1.entityId} and ${entity2.entityId} (chance: ${(bondChance * 100).toFixed(1)}% with ${multiplierValue.toFixed(2)}x multiplier)`);
+        await Promise.all([
+          bond.save(),
+          entity1.save(),
+          entity2.save()
+        ]);
 
-      // Schedule bond completion and cell creation
-      setTimeout(async () => {
-        await this.completeBond(bond._id, entity1.entityId, entity2.entityId);
-      }, bond.duration);
+        console.log(`🔗 Bond formed between entities ${entity1.entityId} and ${entity2.entityId} (duration: ${(bondDuration / 60000).toFixed(1)} mins)`);
 
-      return bond;
+        // Schedule bond completion and cell creation
+        setTimeout(async () => {
+          await this.completeBond(bond._id, entity1.entityId, entity2.entityId);
+        }, bond.duration);
+        
+        createdBondsCount++;
+      }
+      
+      if (createdBondsCount > 0) {
+        console.log(`Total bonds formed this cycle: ${createdBondsCount}`);
+      }
+
     } catch (error) {
       console.error('Error generating bonds:', error);
     }
@@ -866,7 +876,7 @@ class SimulationScheduler {
     // Bootstrap on first start if needed
     this.bootstrapSimulation().then(() => {
       // Use setInterval instead of cron for reliability
-      const intervalDelay = process.env.HYPER_BOOST === 'true' ? 1000 : 4 * 60 * 1000;
+      const intervalDelay = process.env.HYPER_BOOST === 'true' ? 2 * 60 * 1000 : 4 * 60 * 1000;
       this.intervalId = setInterval(async () => {
         await this.runSimulationCycle();
       }, intervalDelay);
