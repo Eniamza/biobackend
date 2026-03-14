@@ -257,7 +257,9 @@ class SimulationScheduler {
       
       // Base chance is 40%, multiplier scales it up to 80% (at 2.0x multiplier)
       const baseBondChance = 0.40;
-      const bondChance = Math.min(0.80, baseBondChance * multiplierValue);
+      const bondChance = process.env.HYPER_BOOST === 'true' 
+        ? 1.0 
+        : Math.min(0.80, baseBondChance * multiplierValue);
       
       // Random chance of bond formation - affected by multiplier
       if (Math.random() > bondChance) {
@@ -278,10 +280,14 @@ class SimulationScheduler {
       }
 
       // Create bond record
+      const bondDuration = process.env.HYPER_BOOST === 'true' 
+        ? 100 
+        : Math.floor(Math.random() * 300000) + 60000; // 1-5 minutes normally
+        
       const bond = new Bond({
         entityA: entity1.entityId,
         entityB: entity2.entityId,
-        duration: Math.floor(Math.random() * 300000) + 60000, // 1-5 minutes
+        duration: bondDuration,
         status: 'active'
       });
 
@@ -374,7 +380,9 @@ class SimulationScheduler {
       
       // Base chance is 50%, multiplier scales it up to 100% (at 2.0x multiplier)
       const baseDivisionChance = 0.50;
-      const divisionChance = Math.min(1.0, baseDivisionChance * multiplierValue);
+      const divisionChance = process.env.HYPER_BOOST === 'true' 
+        ? 1.0 
+        : Math.min(1.0, baseDivisionChance * multiplierValue);
       
       // Get cells that might divide (high energy, normal status, within consolidations)
       // IMPORTANT: Only get cells from consolidations that haven't evolved into entities
@@ -419,7 +427,9 @@ class SimulationScheduler {
             : 0; // Start from 0 if no cells (which shouldn't happen)
           
           // Generate random division duration (1-6 minutes, unaffected by multiplier)
-          const divisionDuration = Math.floor(Math.random() * 300000) + 60000; // 60000-360000 ms
+          const divisionDuration = process.env.HYPER_BOOST === 'true' 
+            ? 100 
+            : Math.floor(Math.random() * 300000) + 60000; // 60000-360000 ms
           
           // Create placeholder cell IMMEDIATELY with status: 'forming'
           const newCell = new Cell({
@@ -689,7 +699,9 @@ class SimulationScheduler {
       if (consolidation && normalCellsCount >= 50 && consolidation.state === 'transparent') {
         // Dynamic evolution chance - boost if behind target
         const baseChance = 0.25;
-        const evolutionChance = boostMode ? Math.min(0.45, baseChance * 1.8) : baseChance;
+        const evolutionChance = process.env.HYPER_BOOST === 'true' 
+          ? 1.0 
+          : (boostMode ? Math.min(0.45, baseChance * 1.8) : baseChance);
         
         if (Math.random() < evolutionChance) {
           // Immediately evolve to entity (no delay needed)
@@ -854,9 +866,10 @@ class SimulationScheduler {
     // Bootstrap on first start if needed
     this.bootstrapSimulation().then(() => {
       // Use setInterval instead of cron for reliability
+      const intervalDelay = process.env.HYPER_BOOST === 'true' ? 1000 : 4 * 60 * 1000;
       this.intervalId = setInterval(async () => {
         await this.runSimulationCycle();
-      }, 4 * 60 * 1000); // 4 minutes in milliseconds
+      }, intervalDelay);
 
       // Run first cycle immediately to recover any stuck operations
       setTimeout(() => {
