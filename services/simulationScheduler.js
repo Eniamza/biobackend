@@ -286,10 +286,10 @@ class SimulationScheduler {
         // Ensure different entities (though shuffle already guarantees unique instances)
         if (entity1._id.toString() === entity2._id.toString()) continue;
 
-        // Force entities to bond for shorter durations in hyper boost (1 minute max)
+        // Force entities to bond for shorter durations in hyper boost (1 to 60 seconds)
         // Shorter bonding = entities are freed up quicker to bond again, massively accelerating the generation cycle. 
         const bondDuration = process.env.HYPER_BOOST === 'true' 
-          ? 60000 // Fixed 1 minute
+          ? Math.floor(Math.random() * 59000) + 1000 // 1 to 60 seconds
           : Math.floor(Math.random() * 300000) + 60000;  // 1-5 minutes normally
           
         const bond = new Bond({
