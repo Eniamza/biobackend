@@ -257,20 +257,14 @@ class SimulationScheduler {
       
       // Base chance is 40%, multiplier scales it up to 80% (at 2.0x multiplier)
       const baseBondChance = 0.40;
-      const bondChance = process.env.HYPER_BOOST === 'true' 
-        ? 1.0 
-        : Math.min(0.80, baseBondChance * multiplierValue);
+      const bondChance = Math.min(0.80, baseBondChance * multiplierValue);
       
-      // We randomly choose between 4-10 entities in each cycle, or scale up in hyper boost
+      // We randomly choose between 4-10 entities in each cycle
       const shuffledEntities = availableEntities.sort(() => 0.5 - Math.random());
       
-      let baseTargetPairs = process.env.HYPER_BOOST === 'true' 
-        ? Math.floor(shuffledEntities.length / 2) // pair up as many entities as possible
-        : Math.floor(Math.random() * 4) + 2; // Math.random() * (maxPairs(5)-minPairs(2)) + minPairs(2) = 2-5 pairs (4-10 entities)
+      let baseTargetPairs = Math.floor(Math.random() * 4) + 2; // 2-5 pairs (4-10 entities)
         
-      const maxBonds = process.env.HYPER_BOOST === 'true' 
-        ? baseTargetPairs 
-        : Math.min(Math.floor(shuffledEntities.length / 2), baseTargetPairs); 
+      const maxBonds = Math.min(Math.floor(shuffledEntities.length / 2), baseTargetPairs);
         
       let createdBondsCount = 0;
       
@@ -278,7 +272,7 @@ class SimulationScheduler {
         if (i + 1 >= shuffledEntities.length) break;
         
         // Random chance for this specific bond
-        if (process.env.HYPER_BOOST !== 'true' && Math.random() > bondChance) continue;
+        if (Math.random() > bondChance) continue;
         
         const entity1 = shuffledEntities[i];
         const entity2 = shuffledEntities[i+1];
@@ -286,10 +280,10 @@ class SimulationScheduler {
         // Ensure different entities (though shuffle already guarantees unique instances)
         if (entity1._id.toString() === entity2._id.toString()) continue;
 
-        // Force entities to bond for shorter durations in hyper boost (1 to 60 seconds)
-        // Shorter bonding = entities are freed up quicker to bond again, massively accelerating the generation cycle. 
+        // In hyper boost, use shorter bond durations (15-90 seconds) to compress the simulation timeline
+        // Normal mode uses 1-5 minutes
         const bondDuration = process.env.HYPER_BOOST === 'true' 
-          ? Math.floor(Math.random() * 59000) + 1000 // 1 to 60 seconds
+          ? Math.floor(Math.random() * 75000) + 15000 // 15-90 seconds
           : Math.floor(Math.random() * 300000) + 60000;  // 1-5 minutes normally
           
         const bond = new Bond({
@@ -394,9 +388,7 @@ class SimulationScheduler {
       
       // Base chance is 50%, multiplier scales it up to 100% (at 2.0x multiplier)
       const baseDivisionChance = 0.50;
-      const divisionChance = process.env.HYPER_BOOST === 'true' 
-        ? 1.0 
-        : Math.min(1.0, baseDivisionChance * multiplierValue);
+      const divisionChance = Math.min(1.0, baseDivisionChance * multiplierValue);
       
       // Get cells that might divide (high energy, normal status, within consolidations)
       // IMPORTANT: Only get cells from consolidations that haven't evolved into entities
@@ -440,9 +432,10 @@ class SimulationScheduler {
             ? cellsInConsolidation[0].cellId + 1 
             : 0; // Start from 0 if no cells (which shouldn't happen)
           
-          // Generate random division duration (1-6 minutes, unaffected by multiplier)
+          // In hyper boost, use shorter division durations (5-30 seconds) to compress the simulation timeline
+          // Normal mode uses 1-6 minutes
           const divisionDuration = process.env.HYPER_BOOST === 'true' 
-            ? 100 
+            ? Math.floor(Math.random() * 25000) + 5000 // 5-30 seconds
             : Math.floor(Math.random() * 300000) + 60000; // 60000-360000 ms
           
           // Create placeholder cell IMMEDIATELY with status: 'forming'
@@ -715,9 +708,7 @@ class SimulationScheduler {
       if (consolidation && normalCellsCount >= 50 && consolidation.state === 'transparent') {
         // Dynamic evolution chance - boost if behind target
         const baseChance = 0.25;
-        const evolutionChance = process.env.HYPER_BOOST === 'true' 
-          ? 1.0 
-          : (boostMode ? Math.min(0.45, baseChance * 1.8) : baseChance);
+        const evolutionChance = boostMode ? Math.min(0.45, baseChance * 1.8) : baseChance;
         
         if (Math.random() < evolutionChance) {
           // Immediately evolve to entity (no delay needed)
@@ -884,7 +875,8 @@ class SimulationScheduler {
     // Bootstrap on first start if needed
     this.bootstrapSimulation().then(() => {
       // Use setInterval instead of cron for reliability
-      const intervalDelay = process.env.HYPER_BOOST === 'true' ? 2 * 60 * 1000 : 4 * 60 * 1000;
+      // Hyper boost runs every 1 minute (vs 4 minutes in normal mode) to compress the simulation timeline
+      const intervalDelay = process.env.HYPER_BOOST === 'true' ? 1 * 60 * 1000 : 4 * 60 * 1000;
       this.intervalId = setInterval(async () => {
         await this.runSimulationCycle();
       }, intervalDelay);
