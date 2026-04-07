@@ -184,13 +184,14 @@ class SimulationScheduler {
       // Check if we need to bootstrap
       const consolidationCount = await Consolidation.countDocuments();
       const cellCount = await Cell.countDocuments();
+      const entityCount = await Entity.countDocuments();
       
-      if (consolidationCount > 0 || cellCount > 0) {
-        console.log('✅ Consolidations/cells already exist, skipping bootstrap');
+      if (consolidationCount > 0 || cellCount > 0 || entityCount > 0) {
+        console.log('✅ Consolidations/cells/entities already exist, skipping bootstrap');
         return;
       }
       
-      console.log('🚀 Bootstrapping simulation with initial consolidations and cells...');
+      console.log('🚀 Bootstrapping simulation with initial consolidations, cells, and entities...');
       
       // Create 5 initial consolidations, each with 10-20 cells
       for (let i = 0; i < 5; i++) {
@@ -233,7 +234,19 @@ class SimulationScheduler {
         console.log(`📦 Created consolidation ${consolidationId} with ${cellCount} cells (Cell 0 to Cell ${cellCount - 1})`);
       }
       
-      console.log('✅ Bootstrap complete! Created 5 consolidations with cells ready to divide');
+      // Create 2 initial entities so bonding can begin immediately
+      for (let i = 0; i < 2; i++) {
+        const newEntityId = await this.getNextEntityId();
+        const newEntity = new Entity({
+          entityId: newEntityId,
+          trait: this.getRandomTrait(),
+          generation: 1
+        });
+        await newEntity.save();
+        console.log(`🧬 Created bootstrap entity ${newEntityId} with trait: ${newEntity.trait}`);
+      }
+      
+      console.log('✅ Bootstrap complete! Created 5 consolidations with cells + 2 entities ready to bond');
     } catch (error) {
       console.error('Error bootstrapping simulation:', error);
     }
