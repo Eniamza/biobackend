@@ -235,7 +235,13 @@ class SimulationScheduler {
       }
       
       // Create 2 initial entities so bonding can begin immediately
+      const maxEntities = parseInt(process.env.MAX_ENTITIES, 10) || Infinity;
+      const bootstrapEntityCount = await Entity.countDocuments();
       for (let i = 0; i < 2; i++) {
+        if (bootstrapEntityCount + i >= maxEntities) {
+          console.log(`⚠️ Entity cap reached (${maxEntities}), skipping bootstrap entity creation`);
+          break;
+        }
         const newEntityId = await this.getNextEntityId();
         const newEntity = new Entity({
           entityId: newEntityId,
@@ -747,6 +753,14 @@ class SimulationScheduler {
       // Check if entity was already created (extra safety check)
       if (consolidation.evolvedToEntityId) {
         console.log(`⚠️ Consolidation ${consolidationId} already has entity ${consolidation.evolvedToEntityId}`);
+        return;
+      }
+
+      // Enforce entity hard cap
+      const maxEntities = parseInt(process.env.MAX_ENTITIES, 10) || Infinity;
+      const currentCount = await Entity.countDocuments();
+      if (currentCount >= maxEntities) {
+        console.log(`⚠️ Entity cap reached (${currentCount}/${maxEntities}), skipping evolution of consolidation ${consolidation.consolidationId}`);
         return;
       }
 
