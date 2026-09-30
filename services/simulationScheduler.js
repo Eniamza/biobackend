@@ -234,25 +234,7 @@ class SimulationScheduler {
         console.log(`📦 Created consolidation ${consolidationId} with ${cellCount} cells (Cell 0 to Cell ${cellCount - 1})`);
       }
       
-      // Create 2 initial entities so bonding can begin immediately
-      const maxEntities = parseInt(process.env.MAX_ENTITIES, 10) || Infinity;
-      const bootstrapEntityCount = await Entity.countDocuments();
-      for (let i = 0; i < 2; i++) {
-        if (bootstrapEntityCount + i >= maxEntities) {
-          console.log(`⚠️ Entity cap reached (${maxEntities}), skipping bootstrap entity creation`);
-          break;
-        }
-        const newEntityId = await this.getNextEntityId();
-        const newEntity = new Entity({
-          entityId: newEntityId,
-          trait: this.getRandomTrait(),
-          generation: 1
-        });
-        await newEntity.save();
-        console.log(`🧬 Created bootstrap entity ${newEntityId} with trait: ${newEntity.trait}`);
-      }
-      
-      console.log('✅ Bootstrap complete! Created 5 consolidations with cells + 2 entities ready to bond');
+      console.log('✅ Bootstrap complete! Created 5 consolidations with cells ready to divide');
     } catch (error) {
       console.error('Error bootstrapping simulation:', error);
     }
