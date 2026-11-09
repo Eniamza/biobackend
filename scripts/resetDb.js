@@ -7,14 +7,16 @@ const resetDb = async () => {
     await dbConnect();
     console.log('Connected to database. Dropping all collections...');
     
-    const collections = mongoose.connection.collections;
-    for (const key in collections) {
-      await collections[key].drop();
-      console.log(`Dropped collection: ${key}`);
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    for (const { name } of collections) {
+      if (name.startsWith('system.')) continue;
+      await mongoose.connection.db.dropCollection(name);
+      console.log(`Dropped collection: ${name}`);
     }
-    
+
     console.log('✅ Database reset complete.');
     await mongoose.disconnect();
+    process.exit(0);
   } catch (error) {
     if (error.code === 26) {
       console.log('Namespace not found - collection probably already dropped');

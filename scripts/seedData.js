@@ -90,5 +90,5 @@ const seedData = async () => {
   }
 };
 
-// Execute the seeding function
-seedData().catch(console.error);
+// lib/db.js opens a native MongoClient on import that would keep the process alive
+seedData().catch(console.error).finally(() => process.exit(0));
