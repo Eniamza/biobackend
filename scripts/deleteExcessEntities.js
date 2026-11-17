@@ -10,7 +10,11 @@ async function runCleanup() {
   const count = await Entity.countDocuments();
   console.log(`Current entity count: ${count}`);
 
-  const TARGET = 7000;
+  const TARGET = parseInt(process.env.MAX_ENTITIES, 10);
+  if (!Number.isFinite(TARGET) || TARGET < 0) {
+    console.error('❌ MAX_ENTITIES is not set to a valid non-negative integer. Aborting.');
+    process.exit(1);
+  }
   if (count <= TARGET) {
     console.log(`Entity count is already ${count}, which is <= ${TARGET}. Nothing to delete.`);
     process.exit(0);
